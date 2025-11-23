@@ -1,0 +1,16 @@
+# Face Recognition Project Dependencies
+
+# Deep Learning & Computer Vision
+# Nota: En Windows, TensorFlow usa GPU automáticamente si detecta una GPU NVIDIA
+# No necesita paquetes CUDA adicionales
+tensorflow==2.17.1
+opencv-python==4.10.0.84
+mtcnn==0.1.1
+keras-facenet==0.3.2
+
+# Data Processing
+numpy==1.26.4
+pillow==10.4.0
+
+# Utilities
+scikit-learn==1.5.2

@@ -1,0 +1,43 @@
+# Face Recognition Project - Ignorar archivos innecesarios
+
+# Entorno virtual
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Datos del proyecto (comentar si quieres versionar tus datos)
+data/raw_images/
+data/aligned_faces/
+data/embeddings/*.pkl
+
+# Modelos descargados
+models/*.h5
+models/*.pb
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Temporales
+*.tmp
+*.temp

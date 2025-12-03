@@ -46,7 +46,7 @@ class FaceRecognitionSystem:
         
         # Cargar MTCNN para detección
         print("   - Cargando MTCNN...")
-        self.detector = MTCNN()
+        self.detector = MTCNN(min_face_size=80)
         
         print("✅ Modelos cargados correctamente")
     
@@ -160,103 +160,121 @@ class FaceRecognitionSystem:
     
     def draw_face_box(self, frame, detection, name=None, distance=None):
         """
-        Dibuja un rectángulo alrededor del rostro y muestra el nombre.
-        
-        Args:
-            frame (np.array): Frame de video
-            detection (dict): Información de detección de MTCNN
-            name (str): Nombre de la persona reconocida
-            distance (float): Distancia del embedding
+        Dibuja un rectángulo y muestra el nombre con porcentaje de fiabilidad.
         """
         x, y, width, height = detection['box']
         x, y = abs(x), abs(y)
         
-        # Color según si se reconoce o no
+        # Calcular porcentaje de fiabilidad (Heurística simple)
+        # Distancia 0.0 = 100%, Distancia 1.0 = 0%
+        # FaceNet suele dar distancias < 0.6 para matches
+        reliability = 0.0
+        if distance is not None:
+            reliability = max(0.0, (0.8 - distance) / 0.8 * 100)
+        # Determinar color y texto
         if name:
-            color = (0, 255, 0)  # Verde si se reconoce
-            label = f"{name}"
-            confidence = f"Dist: {distance:.2f}"
+            # Si hay reconocimiento (Match)
+            if reliability > 60:
+                color = (0, 255, 0)   # Verde fuerte para alta confianza
+            else:
+                color = (0, 255, 255) # Amarillo para confianza media/baja
+            
+            label = name
+            conf_text = f"{reliability:.1f}%"
         else:
-            color = (0, 0, 255)  # Rojo si no se reconoce
+            # Desconocido
+            color = (0, 0, 255)       # Rojo
             label = "Desconocido"
-            confidence = f"Dist: {distance:.2f}" if distance else ""
+            conf_text = f"{reliability:.1f}%" if distance else ""
+
+        # --- DIBUJADO EN PANTALLA ---
         
-        # Dibujar rectángulo
+        # 1. Rectángulo del rostro
         cv2.rectangle(frame, (x, y), (x + width, y + height), color, 2)
         
-        # Dibujar fondo para el texto
-        label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-        cv2.rectangle(frame, (x, y - 35), (x + label_size[0] + 10, y), color, -1)
+        # 2. Fondo para el nombre (arriba)
+        # Calcular tamaño del texto para el fondo
+        (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+        cv2.rectangle(frame, (x, y - 30), (x + text_w + 10, y), color, -1)
         
-        # Dibujar nombre
-        cv2.putText(frame, label, (x + 5, y - 10), 
+        # 3. Nombre
+        cv2.putText(frame, label, (x + 5, y - 8), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
-        # Dibujar confianza/distancia
-        if confidence:
-            cv2.putText(frame, confidence, (x, y + height + 20), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        # 4. Fondo para el porcentaje (abajo)
+        if conf_text:
+            conf_label = f"Fiabilidad: {conf_text}"
+            (conf_w, conf_h), _ = cv2.getTextSize(conf_label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            
+            # Dibujar fondo negro semitransparente abajo para que se lea bien
+            sub_y = y + height
+            cv2.rectangle(frame, (x, sub_y), (x + conf_w + 10, sub_y + 25), (0, 0, 0), -1)
+            
+            # Texto de porcentaje
+            cv2.putText(frame, conf_label, (x + 5, sub_y + 18), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     
     def run(self):
-        """Ejecuta el sistema de reconocimiento en tiempo real."""
+        """
+        Ejecuta el sistema con 'Memoria de Persistencia' para evitar parpadeos.
+        """
         print("\n" + "=" * 60)
-        print("🎥 INICIANDO RECONOCIMIENTO FACIAL EN TIEMPO REAL")
+        print("🎥 INICIANDO RECONOCIMIENTO FACIA")
         print("=" * 60)
-        print(f"\n⚙️  Configuración:")
-        print(f"   - Umbral de distancia: {DISTANCE_THRESHOLD}")
-        print(f"   - Umbral de confianza MTCNN: {CONFIDENCE_THRESHOLD}")
-        print(f"   - Tamaño de imagen: {IMAGE_SIZE}x{IMAGE_SIZE}")
-        print(f"\n⌨️  Controles:")
-        print(f"   - Presiona 'q' para salir")
-        print(f"   - Presiona 'c' para cambiar entre distancia euclidiana/coseno")
-        print("\n📸 Abriendo cámara...\n")
         
         # Inicializar cámara
         cap = cv2.VideoCapture(0)
-        
         if not cap.isOpened():
             print("❌ Error: No se pudo acceder a la cámara")
             return
         
-        # Configurar resolución
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         
-        use_cosine = False
+        # --- CONFIGURACIÓN DE RENDIMIENTO Y PERSISTENCIA ---
+        use_cosine = True
         frame_count = 0
-        process_every_n_frames = 3  # Procesar cada N frames para mejor rendimiento
+        process_every_n_frames = 15
+        
+        # PERSISTENCIA: Cuántos frames mantener el cuadro si se pierde el rostro
+        # 20 frames es aprox 0.5 - 1 segundo (dependiendo de la velocidad de tu PC)
+        PERSISTENCE_LIMIT = 20  
+        frames_without_detection = 0
+        
+        # Memoria para guardar los últimos rostros detectados
+        active_faces = [] 
         
         print("✅ Sistema listo. Mostrando cámara...\n")
         
         while True:
             ret, frame = cap.read()
             if not ret:
-                print("❌ Error al leer el frame")
                 break
             
             frame_count += 1
+            frames_without_detection += 1  # Asumimos que no hay detección hasta probar lo contrario
             display_frame = frame.copy()
             
-            # Procesar solo cada N frames
+            # --- FASE 1: DETECCIÓN (Solo cada N frames) ---
             if frame_count % process_every_n_frames == 0:
-                # Convertir a RGB para MTCNN
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 
-                # Detectar rostros
-                detections = self.detector.detect_faces(rgb_frame)
-                
-                # Procesar cada rostro detectado
-                for detection in detections:
-                    # Filtrar por confianza
-                    if detection['confidence'] < CONFIDENCE_THRESHOLD:
-                        continue
+                try:
+                    # Detectar rostros
+                    detections = self.detector.detect_faces(rgb_frame)
                     
-                    try:
-                        # Extraer rostro
+                    # Lista temporal para este frame
+                    current_detected_faces = []
+                    
+                    for detection in detections:
+                        if detection['confidence'] < CONFIDENCE_THRESHOLD:
+                            continue
+                        
+                        # Extraer coordenadas
                         x, y, width, height = detection['box']
                         x, y = abs(x), abs(y)
                         
-                        # Agregar margen
+                        # Margen
                         margin = int(0.15 * max(width, height))
                         x1 = max(0, x - margin)
                         y1 = max(0, y - margin)
@@ -264,53 +282,56 @@ class FaceRecognitionSystem:
                         y2 = min(rgb_frame.shape[0], y + height + margin)
                         
                         face = rgb_frame[y1:y2, x1:x2]
+                        if face.size == 0: continue
                         
-                        if face.size == 0:
-                            continue
-                        
-                        # Generar embedding
+                        # Reconocer
                         face_embedding = self.get_face_embedding(face)
-                        
-                        # Reconocer rostro
                         name, distance = self.recognize_face(face_embedding, use_cosine)
                         
-                        # Dibujar resultado
-                        self.draw_face_box(display_frame, detection, name, distance)
+                        # Guardar en lista temporal
+                        current_detected_faces.append({
+                            'detection': detection,
+                            'name': name,
+                            'distance': distance
+                        })
+                    
+                    # --- LÓGICA DE PERSISTENCIA ---
+                    if len(current_detected_faces) > 0:
+                        active_faces = current_detected_faces
+                        frames_without_detection = 0
+                    else:
+                        pass
                         
-                    except Exception as e:
-                        print(f"⚠️  Error al procesar rostro: {str(e)}")
-                        continue
+                except Exception as e:
+                    print(f"⚠️ Error: {str(e)}")
+
+            # --- FASE 2: LIMPIEZA ---
+            # Si han pasado demasiados frames sin ver un rostro, olvidamos la memoria
+            if frames_without_detection > PERSISTENCE_LIMIT:
+                active_faces = []
+
+            # --- FASE 3: DIBUJAR ---
+            # Dibujamos lo que haya en memoria (sea nuevo o persistente)
+            for face_data in active_faces:
+                self.draw_face_box(
+                    display_frame, 
+                    face_data['detection'], 
+                    face_data['name'], 
+                    face_data['distance']
+                )
             
-            # Mostrar información en pantalla
-            method = "Coseno" if use_cosine else "Euclidiana"
-            cv2.putText(display_frame, f"Metodo: {method}", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(display_frame, f"Umbral: {DISTANCE_THRESHOLD}", (10, 60),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(display_frame, "Presiona 'q' para salir | 'c' cambiar metodo", 
-                       (10, display_frame.shape[0] - 20),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            # Info en pantalla
+            status_color = (0, 255, 0) if frames_without_detection < PERSISTENCE_LIMIT else (0, 0, 255)
+            cv2.circle(display_frame, (30, 30), 10, status_color, -1) # Indicador de estado
             
-            # Mostrar frame
-            cv2.imshow('Reconocimiento Facial - Face Recognition System', display_frame)
+            cv2.imshow('Reconocimiento Facial', display_frame)
             
-            # Controles
             key = cv2.waitKey(1) & 0xFF
-            
-            if key == ord('q'):
-                break
-            elif key == ord('c'):
-                use_cosine = not use_cosine
-                method = "Coseno" if use_cosine else "Euclidiana"
-                print(f"🔄 Cambiado a distancia {method}")
+            if key == ord('q'): break
+            elif key == ord('c'): use_cosine = not use_cosine
         
-        # Liberar recursos
         cap.release()
         cv2.destroyAllWindows()
-        
-        print("\n" + "=" * 60)
-        print("✅ Sistema de reconocimiento finalizado")
-        print("=" * 60)
 
 def main():
     """Función principal."""
